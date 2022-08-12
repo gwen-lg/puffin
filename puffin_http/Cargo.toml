@@ -15,7 +15,6 @@ include = ["**/*.rs", "Cargo.toml", "README.md"]
 [dependencies]
 anyhow = "1.0"
 async-std = "1.12"
-crossbeam-channel = "0.5"
 log = "0.4"
 puffin = { version = "0.13.3", path = "../puffin", features = [
     "packing",

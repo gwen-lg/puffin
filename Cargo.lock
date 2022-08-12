@@ -2545,7 +2545,6 @@ version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-std",
- "crossbeam-channel",
  "log",
  "puffin",
  "simple_logger",
