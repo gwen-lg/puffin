@@ -5,7 +5,7 @@ use std::{
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, RwLock,
     },
 };
 
@@ -37,20 +37,25 @@ impl Server {
         let (tx, rx): (crossbeam_channel::Sender<Arc<puffin::FrameData>>, _) =
             crossbeam_channel::unbounded();
 
+        let clients = Arc::new(RwLock::new(Vec::new()));
         let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
 
         let join_handle = std::thread::Builder::new()
             .name("puffin-server".to_owned())
             .spawn(move || {
-                let mut server_impl = PuffinServerImpl {
+                let mut ps_connection = PuffinServerConnection {
                     tcp_listener,
-                    clients: Default::default(),
+                    clients: clients.clone(),
+                    num_clients: num_clients_cloned.clone(),
+                };
+                let mut server_impl = PuffinServerImpl {
+                    clients,
                     num_clients: num_clients_cloned,
                 };
 
                 while let Ok(frame) = rx.recv() {
-                    if let Err(err) = server_impl.accept_new_clients() {
+                    if let Err(err) = ps_connection.accept_new_clients() {
                         log::warn!("puffin server failure: {}", err);
                     }
                     if let Err(err) = server_impl.send(&frame) {
@@ -111,14 +116,12 @@ impl Drop for Client {
 }
 
 /// Listens for incoming connections
-/// and streams them puffin profiler data.
-struct PuffinServerImpl {
+struct PuffinServerConnection {
     tcp_listener: TcpListener,
-    clients: Vec<Client>,
+    clients: Arc<RwLock<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
 }
-
-impl PuffinServerImpl {
+impl PuffinServerConnection {
     fn accept_new_clients(&mut self) -> anyhow::Result<()> {
         loop {
             match self.tcp_listener.accept() {
@@ -136,12 +139,13 @@ impl PuffinServerImpl {
                         .spawn(move || client_loop(packet_rx, client_addr, tcp_stream))
                         .context("Couldn't spawn thread")?;
 
-                    self.clients.push(Client {
+                    self.clients.write().unwrap().push(Client {
                         client_addr,
                         packet_tx: Some(packet_tx),
                         join_handle: Some(join_handle),
                     });
-                    self.num_clients.store(self.clients.len(), Ordering::SeqCst);
+                    self.num_clients
+                        .store(self.clients.read().unwrap().len(), Ordering::SeqCst);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     break; // Nothing to do for now.
@@ -153,9 +157,17 @@ impl PuffinServerImpl {
         }
         Ok(())
     }
+}
 
+/// streams to client puffin profiler data.
+struct PuffinServerImpl {
+    clients: Arc<RwLock<Vec<Client>>>,
+    num_clients: Arc<AtomicUsize>,
+}
+
+impl PuffinServerImpl {
     pub fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
-        if self.clients.is_empty() {
+        if self.clients.read().unwrap().is_empty() {
             return Ok(());
         }
         puffin::profile_function!();
@@ -170,7 +182,8 @@ impl PuffinServerImpl {
 
         let packet: Packet = packet.into();
 
-        self.clients.retain(|client| match &client.packet_tx {
+        let mut clients = self.clients.write().unwrap();
+        clients.retain(|client| match &client.packet_tx {
             None => false,
             Some(packet_tx) => match packet_tx.try_send(packet.clone()) {
                 Ok(()) => true,
@@ -184,7 +197,7 @@ impl PuffinServerImpl {
                 }
             },
         });
-        self.num_clients.store(self.clients.len(), Ordering::SeqCst);
+        self.num_clients.store(clients.len(), Ordering::SeqCst);
 
         Ok(())
     }
