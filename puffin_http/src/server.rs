@@ -3,15 +3,13 @@ use async_std::{
     channel,
     io::WriteExt,
     net::{TcpListener, TcpStream},
+    sync::{Arc, RwLock},
     task,
 };
 use puffin::GlobalProfiler;
 use std::{
     net::SocketAddr,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, RwLock,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 /// Maximum size of the backlog of packets to send to a client if they aren't reading fast enough.
@@ -168,13 +166,13 @@ impl PuffinServerConnection {
                         })
                         .context("Couldn't spawn ps-client task")?;
 
-                    self.clients.write().unwrap().push(Client {
+                    self.clients.write().await.push(Client {
                         client_addr,
                         packet_tx: Some(packet_tx),
                         join_handle: Some(join_handle),
                     });
                     self.num_clients
-                        .store(self.clients.read().unwrap().len(), Ordering::SeqCst);
+                        .store(self.clients.read().await.len(), Ordering::SeqCst);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     break; // Nothing to do for now.
@@ -196,7 +194,7 @@ struct PuffinServerSend {
 
 impl PuffinServerSend {
     pub async fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
-        if self.clients.read().unwrap().is_empty() {
+        if self.clients.read().await.is_empty() {
             return Ok(());
         }
         //puffin::profile_function!(); //TODO: enable again later
@@ -212,7 +210,7 @@ impl PuffinServerSend {
 
         let packet: Packet = packet.into();
 
-        let mut clients = self.clients.write().unwrap();
+        let mut clients = self.clients.write().await;
         clients.retain(|client| {
             task::block_on(async { Self::send_to_client(client, packet.clone()).await })
         });
