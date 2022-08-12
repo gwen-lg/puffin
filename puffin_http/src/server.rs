@@ -49,7 +49,7 @@ impl Server {
                     clients: clients.clone(),
                     num_clients: num_clients_cloned.clone(),
                 };
-                let mut server_impl = PuffinServerImpl {
+                let mut ps_send = PuffinServerSend {
                     clients,
                     num_clients: num_clients_cloned,
                 };
@@ -58,7 +58,7 @@ impl Server {
                     if let Err(err) = ps_connection.accept_new_clients() {
                         log::warn!("puffin server failure: {}", err);
                     }
-                    if let Err(err) = server_impl.send(&frame) {
+                    if let Err(err) = ps_send.send(&frame) {
                         log::warn!("puffin server failure: {}", err);
                     }
                 }
@@ -160,12 +160,12 @@ impl PuffinServerConnection {
 }
 
 /// streams to client puffin profiler data.
-struct PuffinServerImpl {
+struct PuffinServerSend {
     clients: Arc<RwLock<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
 }
 
-impl PuffinServerImpl {
+impl PuffinServerSend {
     pub fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
         if self.clients.read().unwrap().is_empty() {
             return Ok(());
