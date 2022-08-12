@@ -14,7 +14,9 @@ include = ["**/*.rs", "Cargo.toml", "README.md"]
 
 [dependencies]
 anyhow = "1.0"
-async-std = { version = "1.12", features = ["unstable"] }
+async-executor = "1.4.1"
+async-std = "1.12"
+futures-lite = "1.12"
 flume = "0.10.14"
 log = "0.4"
 puffin = { version = "0.13.3", path = "../puffin", features = [
