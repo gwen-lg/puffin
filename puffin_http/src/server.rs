@@ -64,7 +64,7 @@ impl Server {
 
         let _psconnect_handle = task::Builder::new()
             .name("ps-connect".to_owned())
-            .spawn(async move {
+            .local(async move {
                 let tcp_listener = TcpListener::bind(bind_addr)
                     .await
                     .context("binding server TCP socket")
@@ -83,7 +83,7 @@ impl Server {
 
         let pssend_handle = task::Builder::new()
             .name("ps-send".to_owned())
-            .spawn(async move {
+            .local(async move {
                 let mut ps_send = PuffinServerSend {
                     clients,
                     num_clients,
@@ -158,7 +158,7 @@ impl PuffinServerConnection {
 
                     let join_handle = task::Builder::new()
                         .name("ps-client".to_owned())
-                        .spawn(async move {
+                        .local(async move {
                             client_loop(packet_rx, client_addr, tcp_stream).await;
                         })
                         .context("Couldn't spawn ps-client task")?;
@@ -194,7 +194,7 @@ impl PuffinServerSend {
         if self.clients.read().await.is_empty() {
             return Ok(());
         }
-        //puffin::profile_function!(); //TODO: enable again later
+        puffin::profile_function!();
 
         let mut packet = vec![];
         packet
