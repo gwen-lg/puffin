@@ -22,7 +22,7 @@ const MAX_FRAMES_IN_QUEUE: usize = 30;
 /// Drop to stop transmitting and listening for new connections.
 pub struct Server {
     sink_id: puffin::FrameSinkId,
-    join_handle: Option<std::thread::JoinHandle<()>>,
+    join_handle: Option<task::JoinHandle<()>>,
     num_clients: Arc<AtomicUsize>,
 }
 
@@ -43,32 +43,40 @@ impl Server {
             crossbeam_channel::unbounded();
 
         let clients = Arc::new(RwLock::new(Vec::new()));
+        let clients_cloned = clients.clone();
         let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
 
-        let join_handle = std::thread::Builder::new()
-            .name("puffin-server".to_owned())
-            .spawn(move || {
+        task::Builder::new()
+            .name("ps-connect".to_owned())
+            .spawn(async move {
                 let mut ps_connection = PuffinServerConnection {
                     tcp_listener,
-                    clients: clients.clone(),
-                    num_clients: num_clients_cloned.clone(),
+                    clients: clients_cloned,
+                    num_clients: num_clients_cloned,
                 };
+                if let Err(err) = ps_connection.accept_new_clients().await {
+                    log::warn!("puffin server failure: {}", err);
+                }
+            })
+            .context("Couldn't spawn ps-connect task")?;
+
+        let num_clients_cloned = num_clients.clone();
+        let join_handle = task::Builder::new()
+            .name("ps-send".to_owned())
+            .spawn(async move {
                 let mut ps_send = PuffinServerSend {
                     clients,
                     num_clients: num_clients_cloned,
                 };
 
                 while let Ok(frame) = rx.recv() {
-                    if let Err(err) = task::block_on(ps_connection.accept_new_clients()) {
-                        log::warn!("puffin server failure: {}", err);
-                    }
-                    if let Err(err) = task::block_on(ps_send.send(&frame)) {
+                    if let Err(err) = ps_send.send(&frame).await {
                         log::warn!("puffin server failure: {}", err);
                     }
                 }
             })
-            .context("Couldn't spawn thread")?;
+            .context("Couldn't spawn ps-send task")?;
 
         let sink_id = GlobalProfiler::lock().add_sink(Box::new(move |frame| {
             tx.send(frame).ok();
@@ -93,7 +101,7 @@ impl Drop for Server {
 
         // Take care to send everything before we shut down:
         if let Some(join_handle) = self.join_handle.take() {
-            join_handle.join().ok();
+            task::block_on(join_handle); //.ok ?
         }
     }
 }
@@ -173,7 +181,7 @@ impl PuffinServerSend {
         if self.clients.read().unwrap().is_empty() {
             return Ok(());
         }
-        puffin::profile_function!();
+        //puffin::profile_function!(); //TODO: enable again later
 
         let mut packet = vec![];
         packet
