@@ -22,19 +22,14 @@ const MAX_FRAMES_IN_QUEUE: usize = 30;
 /// Drop to stop transmitting and listening for new connections.
 pub struct Server {
     sink_id: puffin::FrameSinkId,
-    join_handle: Option<task::JoinHandle<()>>,
+    join_handle: Option<std::thread::JoinHandle<()>>,
     num_clients: Arc<AtomicUsize>,
 }
 
 impl Server {
     /// Start listening for connections on this addr (e.g. "0.0.0.0:8585")
     pub fn new(bind_addr: &str) -> anyhow::Result<Self> {
-        let tcp_listener = task::block_on(async {
-            TcpListener::bind(bind_addr)
-                .await
-                .context("binding server TCP socket")
-        })?;
-
+        let bind_addr = String::from(bind_addr);
         // We use crossbeam_channel instead of `mpsc`,
         // because on shutdown we want all frames to be sent.
         // `mpsc::Receiver` stops receiving as soon as the `Sender` is dropped,
@@ -42,12 +37,43 @@ impl Server {
         let (tx, rx): (crossbeam_channel::Sender<Arc<puffin::FrameData>>, _) =
             crossbeam_channel::unbounded();
 
-        let clients = Arc::new(RwLock::new(Vec::new()));
-        let clients_cloned = clients.clone();
         let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
+        let join_handle = std::thread::Builder::new()
+            .name("puffin-server".to_owned())
+            .spawn(move || {
+                Server::run(bind_addr, rx, num_clients_cloned).unwrap();
+            })
+            .context("Can't start puffin-server thread.")?;
 
-        task::Builder::new()
+        let sink_id = GlobalProfiler::lock().add_sink(Box::new(move |frame| {
+            tx.try_send(frame).ok();
+        }));
+
+        Ok(Server {
+            sink_id,
+            join_handle: Some(join_handle),
+            num_clients,
+        })
+    }
+
+    /// start and run puffin server service
+    pub fn run(
+        bind_addr: String,
+        rx: crossbeam_channel::Receiver<Arc<puffin::FrameData>>,
+        num_clients: Arc<AtomicUsize>,
+    ) -> anyhow::Result<()> {
+        let tcp_listener = task::block_on(async {
+            TcpListener::bind(bind_addr)
+                .await
+                .context("binding server TCP socket")
+        })?;
+
+        let clients = Arc::new(RwLock::new(Vec::new()));
+        let clients_cloned = clients.clone();
+        let num_clients_cloned = num_clients.clone();
+
+        let _psconnect_handle = task::Builder::new()
             .name("ps-connect".to_owned())
             .spawn(async move {
                 let mut ps_connection = PuffinServerConnection {
@@ -61,13 +87,12 @@ impl Server {
             })
             .context("Couldn't spawn ps-connect task")?;
 
-        let num_clients_cloned = num_clients.clone();
-        let join_handle = task::Builder::new()
+        let pssend_handle = task::Builder::new()
             .name("ps-send".to_owned())
             .spawn(async move {
                 let mut ps_send = PuffinServerSend {
                     clients,
-                    num_clients: num_clients_cloned,
+                    num_clients,
                 };
 
                 while let Ok(frame) = rx.recv() {
@@ -78,15 +103,8 @@ impl Server {
             })
             .context("Couldn't spawn ps-send task")?;
 
-        let sink_id = GlobalProfiler::lock().add_sink(Box::new(move |frame| {
-            tx.send(frame).ok();
-        }));
-
-        Ok(Server {
-            sink_id,
-            join_handle: Some(join_handle),
-            num_clients,
-        })
+        task::block_on(pssend_handle);
+        Ok(())
     }
 
     /// Number of clients currently connected.
@@ -101,7 +119,7 @@ impl Drop for Server {
 
         // Take care to send everything before we shut down:
         if let Some(join_handle) = self.join_handle.take() {
-            task::block_on(join_handle); //.ok ?
+            join_handle.join().ok();
         }
     }
 }
@@ -195,23 +213,25 @@ impl PuffinServerSend {
         let packet: Packet = packet.into();
 
         let mut clients = self.clients.write().unwrap();
-        clients.retain(|client| match &client.packet_tx {
-            None => false,
-            Some(packet_tx) => match packet_tx.try_send(packet.clone()) {
-                Ok(()) => true,
-                Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
-                Err(crossbeam_channel::TrySendError::Full(_)) => {
-                    log::info!(
-                        "puffin client {} is not accepting data fast enough; dropping a frame",
-                        client.client_addr
-                    );
-                    true
-                }
-            },
+        clients.retain(|client| {
+            task::block_on(async { Self::send_to_client(client, packet.clone()).await })
         });
         self.num_clients.store(clients.len(), Ordering::SeqCst);
 
         Ok(())
+    }
+
+    async fn send_to_client(client: &Client, packet: Packet) -> bool {
+        match &client.packet_tx {
+            None => false,
+            Some(packet_tx) => match packet_tx.send(packet) {
+                Ok(()) => true,
+                Err(err) => {
+                    log::info!("puffin send error: {} for '{}'", err, client.client_addr);
+                    true
+                }
+            },
+        }
     }
 }
 
