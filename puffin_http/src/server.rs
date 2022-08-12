@@ -19,7 +19,7 @@ const MAX_FRAMES_IN_QUEUE: usize = 30;
 /// Drop to stop transmitting and listening for new connections.
 pub struct Server {
     sink_id: puffin::FrameSinkId,
-    join_handle: Option<std::thread::JoinHandle<()>>,
+    send_handle: Option<std::thread::JoinHandle<()>>,
     num_clients: Arc<AtomicUsize>,
 }
 
@@ -52,7 +52,7 @@ impl Server {
             crossbeam_channel::unbounded();
 
         let num_clients_cloned = num_clients.clone();
-        let join_handle = std::thread::Builder::new()
+        let send_handle = std::thread::Builder::new()
             .name("ps-send".to_owned())
             .spawn(move || {
                 let mut server_impl = PuffinServerSend {
@@ -74,7 +74,7 @@ impl Server {
 
         Ok(Server {
             sink_id,
-            join_handle: Some(join_handle),
+            send_handle: Some(send_handle),
             num_clients,
         })
     }
@@ -90,8 +90,8 @@ impl Drop for Server {
         GlobalProfiler::lock().remove_sink(self.sink_id);
 
         // Take care to send everything before we shut down:
-        if let Some(join_handle) = self.join_handle.take() {
-            join_handle.join().ok();
+        if let Some(send_handle) = self.send_handle.take() {
+            send_handle.join().ok();
         }
     }
 }
