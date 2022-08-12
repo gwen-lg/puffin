@@ -24,6 +24,13 @@ fn main() {
         let data = format!("Main loop num {}", loop_count);
 		puffin::profile_scope!("main_loop", data);
 		puffin::GlobalProfiler::lock().new_frame();
+		if false { // loop_count == 0
+			// Big sleep to simulate loading
+			puffin::profile_scope!("loading");
+			let sleep_duration = time::Duration::from_secs(10);
+			thread::sleep(sleep_duration);
+
+		}
 		loop_count += 1;
 
 		let loop_duration = compute_loop_duration();
