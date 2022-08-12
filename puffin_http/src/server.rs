@@ -1,7 +1,6 @@
 use anyhow::Context as _;
 use async_executor::{LocalExecutor, Task};
 use async_std::{
-    channel,
     io::WriteExt,
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{Arc, RwLock},
@@ -233,7 +232,7 @@ impl Server {
         // because on shutdown we want all frames to be sent.
         // `mpsc::Receiver` stops receiving as soon as the `Sender` is dropped,
         // but `crossbeam_channel` will continue until the channel is empty.
-        let (tx, rx): (channel::Sender<Arc<puffin::FrameData>>, _) = channel::unbounded();
+        let (tx, rx): (flume::Sender<Arc<puffin::FrameData>>, _) = flume::unbounded();
 
         let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
@@ -246,7 +245,7 @@ impl Server {
 
         // Call the `install` function to add ourselves as a sink
         let sink_id = sink_install(Box::new(move |frame| {
-            future::block_on(async { tx.send(frame).await }).unwrap();
+            tx.send(frame).unwrap();
         }));
 
         Ok(Server {
@@ -260,7 +259,7 @@ impl Server {
     /// start and run puffin server service
     pub fn run(
         bind_addr: String,
-        rx: channel::Receiver<Arc<puffin::FrameData>>,
+        rx: flume::Receiver<Arc<puffin::FrameData>>,
         num_clients: Arc<AtomicUsize>,
     ) -> anyhow::Result<()> {
         let executor = Arc::new(LocalExecutor::new());
@@ -299,7 +298,7 @@ impl Server {
                     frame_view: Default::default(),
                 };
 
-                while let Ok(frame) = rx.recv().await {
+                while let Ok(frame) = rx.recv_async().await {
                     ps_send.frame_view.add_frame(frame.clone());
                     if let Err(err) = ps_send.send(&frame).await {
                         log::warn!("puffin server failure: {}", err);
@@ -334,7 +333,7 @@ type Packet = Arc<[u8]>;
 
 struct Client {
     client_addr: SocketAddr,
-    packet_tx: Option<channel::Sender<Packet>>,
+    packet_tx: Option<flume::Sender<Packet>>,
     join_handle: Option<Task<()>>,
 }
 
@@ -368,7 +367,7 @@ impl<'a> PuffinServerConnection<'a> {
                     puffin::profile_scope!("accept_client");
                     log::info!("{} connected", client_addr);
 
-                    let (packet_tx, packet_rx) = channel::bounded(MAX_FRAMES_IN_QUEUE);
+                    let (packet_tx, packet_rx) = flume::bounded(MAX_FRAMES_IN_QUEUE);
 
                     let join_handle = //task::Builder::new()
                         //.name("ps-client".to_owned())
@@ -446,7 +445,7 @@ impl PuffinServerSend {
         puffin::profile_function!();
         match &client.packet_tx {
             None => false,
-            Some(packet_tx) => match packet_tx.send(packet).await {
+            Some(packet_tx) => match packet_tx.send_async(packet).await {
                 Ok(()) => true,
                 Err(err) => {
                     log::info!("puffin send error: {} for '{}'", err, client.client_addr);
@@ -458,12 +457,12 @@ impl PuffinServerSend {
 }
 
 async fn client_loop(
-    packet_rx: channel::Receiver<Packet>,
+    packet_rx: flume::Receiver<Packet>,
     client_addr: SocketAddr,
     mut tcp_stream: TcpStream,
 ) {
     loop {
-        match packet_rx.recv().await {
+        match packet_rx.recv_async().await {
             Ok(packet) => {
                 puffin::profile_scope!("write frame to client");
                 if let Err(err) = tcp_stream.write_all(&packet).await {

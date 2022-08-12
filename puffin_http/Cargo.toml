@@ -20,6 +20,7 @@ async-std = { version = "1.12", default-features = false, features = [
     "std",
     "default",
 ] }
+flume = "0.11"
 futures-lite = "2.5"
 log = "0.4"
 parking_lot = "0.12"
