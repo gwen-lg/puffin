@@ -1,5 +1,6 @@
 use anyhow::Context as _;
 use async_std::{
+    channel,
     io::WriteExt,
     net::{TcpListener, TcpStream},
     task,
@@ -236,8 +237,7 @@ impl Server {
         // because on shutdown we want all frames to be sent.
         // `mpsc::Receiver` stops receiving as soon as the `Sender` is dropped,
         // but `crossbeam_channel` will continue until the channel is empty.
-        let (tx, rx): (crossbeam_channel::Sender<Arc<puffin::FrameData>>, _) =
-            crossbeam_channel::unbounded();
+        let (tx, rx): (channel::Sender<Arc<puffin::FrameData>>, _) = channel::unbounded();
 
         let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
@@ -250,7 +250,7 @@ impl Server {
 
         // Call the `install` function to add ourselves as a sink
         let sink_id = sink_install(Box::new(move |frame| {
-            tx.send(frame).ok();
+            task::block_on(async { tx.send(frame).await }).unwrap();
         }));
 
         Ok(Server {
@@ -264,7 +264,7 @@ impl Server {
     /// start and run puffin server service
     pub fn run(
         bind_addr: String,
-        rx: crossbeam_channel::Receiver<Arc<puffin::FrameData>>,
+        rx: channel::Receiver<Arc<puffin::FrameData>>,
         num_clients: Arc<AtomicUsize>,
     ) -> anyhow::Result<()> {
         let tcp_listener = task::block_on(async {
@@ -300,7 +300,7 @@ impl Server {
                     frame_view: Default::default(),
                 };
 
-                while let Ok(frame) = rx.recv() {
+                while let Ok(frame) = rx.recv().await {
                     ps_send.frame_view.add_frame(frame.clone());
                     if let Err(err) = ps_send.send(&frame).await {
                         log::warn!("puffin server failure: {}", err);
@@ -335,7 +335,7 @@ type Packet = Arc<[u8]>;
 
 struct Client {
     client_addr: SocketAddr,
-    packet_tx: Option<crossbeam_channel::Sender<Packet>>,
+    packet_tx: Option<channel::Sender<Packet>>,
     join_handle: Option<task::JoinHandle<()>>,
 }
 
@@ -366,7 +366,7 @@ impl PuffinServerConnection {
                 Ok((tcp_stream, client_addr)) => {
                     log::info!("{} connected", client_addr);
 
-                    let (packet_tx, packet_rx) = crossbeam_channel::bounded(MAX_FRAMES_IN_QUEUE);
+                    let (packet_tx, packet_rx) = channel::bounded(MAX_FRAMES_IN_QUEUE);
 
                     let join_handle = task::Builder::new()
                         .name("ps-client".to_owned())
@@ -436,7 +436,7 @@ impl PuffinServerSend {
     async fn send_to_client(client: &Client, packet: Packet) -> bool {
         match &client.packet_tx {
             None => false,
-            Some(packet_tx) => match packet_tx.send(packet) {
+            Some(packet_tx) => match packet_tx.send(packet).await {
                 Ok(()) => true,
                 Err(err) => {
                     log::info!("puffin send error: {} for '{}'", err, client.client_addr);
@@ -448,11 +448,11 @@ impl PuffinServerSend {
 }
 
 async fn client_loop(
-    packet_rx: crossbeam_channel::Receiver<Packet>,
+    packet_rx: channel::Receiver<Packet>,
     client_addr: SocketAddr,
     mut tcp_stream: TcpStream,
 ) {
-    while let Ok(packet) = packet_rx.recv() {
+    while let Ok(packet) = packet_rx.recv().await {
         if let Err(err) = tcp_stream.write_all(&packet).await {
             log::info!(
                 "puffin server failed sending to {}: {} (kind: {:?})",
