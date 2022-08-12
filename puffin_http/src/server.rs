@@ -111,7 +111,7 @@ type Packet = Arc<[u8]>;
 struct Client {
     client_addr: SocketAddr,
     packet_tx: Option<crossbeam_channel::Sender<Packet>>,
-    join_handle: Option<std::thread::JoinHandle<()>>,
+    join_handle: Option<task::JoinHandle<()>>,
 }
 
 impl Drop for Client {
@@ -123,7 +123,7 @@ impl Drop for Client {
 
         // Wait for the shutdown:
         if let Some(join_handle) = self.join_handle.take() {
-            join_handle.join().ok();
+            task::block_on(join_handle); // .ok()
         }
     }
 }
@@ -143,12 +143,12 @@ impl PuffinServerConnection {
 
                     let (packet_tx, packet_rx) = crossbeam_channel::bounded(MAX_FRAMES_IN_QUEUE);
 
-                    let join_handle = std::thread::Builder::new()
-                        .name("puffin-server-client".to_owned())
-                        .spawn(move || {
-                            task::block_on(client_loop(packet_rx, client_addr, tcp_stream));
+                    let join_handle = task::Builder::new()
+                        .name("ps-client".to_owned())
+                        .spawn(async move {
+                            client_loop(packet_rx, client_addr, tcp_stream).await;
                         })
-                        .context("Couldn't spawn thread")?;
+                        .context("Couldn't spawn ps-client task")?;
 
                     self.clients.write().unwrap().push(Client {
                         client_addr,
