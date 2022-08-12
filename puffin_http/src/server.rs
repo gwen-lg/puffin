@@ -1,11 +1,13 @@
 use anyhow::Context as _;
 use puffin::GlobalProfiler;
 use std::{
+    borrow::Borrow,
     io::Write,
     net::{SocketAddr, TcpListener, TcpStream},
+    ops::DerefMut,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -26,9 +28,22 @@ impl Server {
     /// Start listening for connections on this addr (e.g. "0.0.0.0:8585")
     pub fn new(bind_addr: &str) -> anyhow::Result<Self> {
         let tcp_listener = TcpListener::bind(bind_addr).context("binding server TCP socket")?;
-        tcp_listener
-            .set_nonblocking(true)
-            .context("TCP set_nonblocking")?;
+
+        let clients: Arc<Mutex<Vec<Client>>> = Default::default();
+        let num_clients = Arc::new(AtomicUsize::default());
+        let num_clients_cloned = num_clients.clone();
+
+        let clients_cloned = clients.clone();
+        std::thread::Builder::new()
+            .name("puffin-server-client-watcher".to_owned())
+            .spawn(move || {
+                if let Err(err) =
+                    accept_new_clients(tcp_listener, clients_cloned, num_clients_cloned)
+                {
+                    log::warn!("puffin server failure: {}", err);
+                }
+            })
+            .context("Couldn't spawn puffin client watcher thread")?;
 
         // We use crossbeam_channel instead of `mpsc`,
         // because on shutdown we want all frames to be sent.
@@ -37,22 +52,16 @@ impl Server {
         let (tx, rx): (crossbeam_channel::Sender<Arc<puffin::FrameData>>, _) =
             crossbeam_channel::unbounded();
 
-        let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
-
         let join_handle = std::thread::Builder::new()
             .name("puffin-server".to_owned())
             .spawn(move || {
-                let mut server_impl = PuffinServerImpl {
-                    tcp_listener,
+                let mut server_impl = PuffinServerSend {
                     clients: Default::default(),
                     num_clients: num_clients_cloned,
                 };
 
                 while let Ok(frame) = rx.recv() {
-                    if let Err(err) = server_impl.accept_new_clients() {
-                        log::warn!("puffin server failure: {}", err);
-                    }
                     if let Err(err) = server_impl.send(&*frame) {
                         log::warn!("puffin server failure: {}", err);
                     }
@@ -110,52 +119,56 @@ impl Drop for Client {
     }
 }
 
+fn accept_new_clients(
+    tcp_listener: TcpListener,
+    clients: Arc<Mutex<Vec<Client>>>,
+    num_clients: Arc<AtomicUsize>,
+) -> anyhow::Result<()> {
+    loop {
+        match tcp_listener.accept() {
+            Ok((tcp_stream, client_addr)) => {
+                tcp_stream
+                    .set_nonblocking(false)
+                    .context("stream.set_nonblocking")?;
+
+                log::info!("{} connected", client_addr);
+
+                let (packet_tx, packet_rx) = crossbeam_channel::bounded(MAX_FRAMES_IN_QUEUE);
+
+                let join_handle = std::thread::Builder::new()
+                    .name("puffin-server-client".to_owned())
+                    .spawn(move || client_loop(packet_rx, client_addr, tcp_stream))
+                    .context("Couldn't spawn thread")?;
+
+                let mut clients = clients.lock().unwrap();
+                clients.push(Client {
+                    client_addr,
+                    packet_tx: Some(packet_tx),
+                    join_handle: Some(join_handle),
+                });
+                num_clients.store(clients.len(), Ordering::SeqCst);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                break; // Nothing to do for now.
+            }
+            Err(e) => {
+                anyhow::bail!("puffin server TCP error: {:?}", e);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Listens for incoming connections
 /// and streams them puffin profiler data.
-struct PuffinServerImpl {
-    tcp_listener: TcpListener,
-    clients: Vec<Client>,
+struct PuffinServerSend {
+    clients: Arc<Mutex<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
 }
 
-impl PuffinServerImpl {
-    fn accept_new_clients(&mut self) -> anyhow::Result<()> {
-        loop {
-            match self.tcp_listener.accept() {
-                Ok((tcp_stream, client_addr)) => {
-                    tcp_stream
-                        .set_nonblocking(false)
-                        .context("stream.set_nonblocking")?;
-
-                    log::info!("{} connected", client_addr);
-
-                    let (packet_tx, packet_rx) = crossbeam_channel::bounded(MAX_FRAMES_IN_QUEUE);
-
-                    let join_handle = std::thread::Builder::new()
-                        .name("puffin-server-client".to_owned())
-                        .spawn(move || client_loop(packet_rx, client_addr, tcp_stream))
-                        .context("Couldn't spawn thread")?;
-
-                    self.clients.push(Client {
-                        client_addr,
-                        packet_tx: Some(packet_tx),
-                        join_handle: Some(join_handle),
-                    });
-                    self.num_clients.store(self.clients.len(), Ordering::SeqCst);
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    break; // Nothing to do for now.
-                }
-                Err(e) => {
-                    anyhow::bail!("puffin server TCP error: {:?}", e);
-                }
-            }
-        }
-        Ok(())
-    }
-
+impl PuffinServerSend {
     pub fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
-        if self.clients.is_empty() {
+        if self.num_clients.load(Ordering::SeqCst) == 0 {
             return Ok(());
         }
         puffin::profile_function!();
@@ -170,21 +183,24 @@ impl PuffinServerImpl {
 
         let packet: Packet = packet.into();
 
-        self.clients.retain(|client| match &client.packet_tx {
-            None => false,
-            Some(packet_tx) => match packet_tx.try_send(packet.clone()) {
-                Ok(()) => true,
-                Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
-                Err(crossbeam_channel::TrySendError::Full(_)) => {
-                    log::info!(
-                        "puffin client {} is not accepting data fast enough; dropping a frame",
-                        client.client_addr
-                    );
-                    true
-                }
-            },
-        });
-        self.num_clients.store(self.clients.len(), Ordering::SeqCst);
+        let mut clients = self.clients.lock().unwrap();
+        clients
+            .deref_mut()
+            .retain(|client| match &client.packet_tx {
+                None => false,
+                Some(packet_tx) => match packet_tx.try_send(packet.clone()) {
+                    Ok(()) => true,
+                    Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
+                    Err(crossbeam_channel::TrySendError::Full(_)) => {
+                        log::info!(
+                            "puffin client {} is not accepting data fast enough; dropping a frame",
+                            client.client_addr
+                        );
+                        true
+                    }
+                },
+            });
+        self.num_clients.store(clients.len(), Ordering::SeqCst);
 
         Ok(())
     }
