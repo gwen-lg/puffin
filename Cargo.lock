@@ -2719,7 +2719,9 @@ name = "puffin_http"
 version = "0.11.0"
 dependencies = [
  "anyhow",
+ "async-executor",
  "async-std",
+ "futures-lite",
  "log",
  "puffin",
  "simple_logger",
