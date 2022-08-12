@@ -2,15 +2,12 @@ use anyhow::Context as _;
 use async_std::{
     channel,
     io::WriteExt,
-    net::{TcpListener, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
     sync::{Arc, RwLock},
     task,
 };
 use puffin::GlobalProfiler;
-use std::{
-    net::SocketAddr,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Maximum size of the backlog of packets to send to a client if they aren't reading fast enough.
 const MAX_FRAMES_IN_QUEUE: usize = 30;
