@@ -21,6 +21,7 @@ pub struct Server {
     sink_id: puffin::FrameSinkId,
     send_handle: Option<std::thread::JoinHandle<()>>,
     num_clients: Arc<AtomicUsize>,
+    recv_client_connect: crossbeam_channel::Receiver<()>,
 }
 
 impl Server {
@@ -32,13 +33,17 @@ impl Server {
         let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
 
+        let (sender_client_connect, recv_client_connect) = crossbeam_channel::bounded(1);
         let clients_cloned = clients.clone();
         std::thread::Builder::new()
             .name("ps-client-watcher".to_owned())
             .spawn(move || {
-                if let Err(err) =
-                    accept_new_clients(tcp_listener, clients_cloned, num_clients_cloned)
-                {
+                if let Err(err) = accept_new_clients(
+                    tcp_listener,
+                    clients_cloned,
+                    num_clients_cloned,
+                    sender_client_connect,
+                ) {
                     log::warn!("puffin server failure: {}", err);
                 }
             })
@@ -76,12 +81,25 @@ impl Server {
             sink_id,
             send_handle: Some(send_handle),
             num_clients,
+            recv_client_connect,
         })
     }
 
     /// Number of clients currently connected.
     pub fn num_clients(&self) -> usize {
         self.num_clients.load(Ordering::SeqCst)
+    }
+
+    /// Block thread to wait at least a puffin client.
+    pub fn wait_client(&self) {
+        while self.num_clients() == 0 {
+            match self.recv_client_connect.recv() {
+                Ok(()) => {}
+                Err(err) => {
+                    log::warn!("wait_client: {}", err);
+                }
+            }
+        }
     }
 }
 
@@ -122,6 +140,7 @@ fn accept_new_clients(
     tcp_listener: TcpListener,
     clients: Arc<RwLock<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
+    recv_client_connect: crossbeam_channel::Sender<()>,
 ) -> anyhow::Result<()> {
     loop {
         //let clients = Arc::clone(&clients);
@@ -146,6 +165,12 @@ fn accept_new_clients(
                     join_handle: Some(join_handle),
                 });
                 num_clients.store(clients.read().unwrap().len(), Ordering::SeqCst);
+                match recv_client_connect.send(()) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        log::info!("failed to send msg : {}", err);
+                    }
+                }
             }
             Err(e) => {
                 anyhow::bail!("puffin server TCP error: {:?}", e);
