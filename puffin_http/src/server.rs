@@ -20,6 +20,7 @@ pub struct Server {
     sink_id: puffin::FrameSinkId,
     join_handle: Option<std::thread::JoinHandle<()>>,
     num_clients: Arc<AtomicUsize>,
+    recv_client_connect: flume::Receiver<()>,
 }
 
 impl Server {
@@ -31,13 +32,14 @@ impl Server {
         // `mpsc::Receiver` stops receiving as soon as the `Sender` is dropped,
         // but `crossbeam_channel` will continue until the channel is empty.
         let (tx, rx): (flume::Sender<Arc<puffin::FrameData>>, _) = flume::unbounded();
+        let (sender_client_connect, recv_client_connect) = flume::bounded(1);
 
         let num_clients = Arc::new(AtomicUsize::default());
         let num_clients_cloned = num_clients.clone();
         let join_handle = std::thread::Builder::new()
             .name("puffin-server".to_owned())
             .spawn(move || {
-                Server::run(bind_addr, rx, num_clients_cloned).unwrap();
+                Server::run(bind_addr, rx, num_clients_cloned, sender_client_connect).unwrap();
             })
             .context("Can't start puffin-server thread.")?;
 
@@ -49,6 +51,7 @@ impl Server {
             sink_id,
             join_handle: Some(join_handle),
             num_clients,
+            recv_client_connect,
         })
     }
 
@@ -57,6 +60,7 @@ impl Server {
         bind_addr: String,
         rx: flume::Receiver<Arc<puffin::FrameData>>,
         num_clients: Arc<AtomicUsize>,
+        sender_client_connect: flume::Sender<()>,
     ) -> anyhow::Result<()> {
         let executor = Arc::new(LocalExecutor::new());
 
@@ -78,6 +82,7 @@ impl Server {
                     tcp_listener,
                     clients: clients_cloned,
                     num_clients: num_clients_cloned,
+                    sender_client_connect,
                 };
                 if let Err(err) = ps_connection.accept_new_clients().await {
                     log::warn!("puffin server failure: {}", err);
@@ -108,6 +113,18 @@ impl Server {
     /// Number of clients currently connected.
     pub fn num_clients(&self) -> usize {
         self.num_clients.load(Ordering::SeqCst)
+    }
+
+    /// Block thread to wait at least a puffin client.
+    pub fn wait_client(&self) {
+        while self.num_clients() == 0 {
+            match self.recv_client_connect.recv() {
+                Ok(()) => {}
+                Err(err) => {
+                    log::warn!("wait_client: {}", err);
+                }
+            }
+        }
     }
 }
 
@@ -150,6 +167,7 @@ struct PuffinServerConnection<'a> {
     tcp_listener: TcpListener,
     clients: Arc<RwLock<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
+    sender_client_connect: flume::Sender<()>,
 }
 
 impl<'a> PuffinServerConnection<'a> {
@@ -176,6 +194,12 @@ impl<'a> PuffinServerConnection<'a> {
                     });
                     self.num_clients
                         .store(self.clients.read().await.len(), Ordering::SeqCst);
+                    match self.sender_client_connect.send(()) {
+                        Ok(()) => {}
+                        Err(err) => {
+                            log::info!("failed to send msg : {}", err);
+                        }
+                    }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     break; // Nothing to do for now.
