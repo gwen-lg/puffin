@@ -18,22 +18,31 @@ Listens for incoming connections and streams them puffin profiler data.
  - num_clients: shared 'nb clients'
  - fn new() : 
  	- create channel for get frame info
- 	- create PuffinServerImpl object to use in **puffin-server** thread
- 	- create thread **puffin-server** for lisen for client and send frame to client
+ 	- create thread **puffin-server** with `run` as start function
+  puffin management work is executed in this thread.
+ - fn run() :
+  - Create en LocalExecutor to handle puffin-server async task.
+ 	- create PuffinServerConnect object to use in **ps-connect** task
+  - create PuffinServerSend object to use in **ps-send** task
 	
 - struct Client
  - client_addr
  - packet_tx: channel sender
  - join_handle: **puffin-server-client** thread handle
 
-- struct PuffinServerImpl
+- struct PuffinServerConnect
+ - executor:
  - tcp_listener: tcp listener of clients
- - clients: list of **Client** object
+ - clients: shared list of **Client** object
  - num_clients: shared 'nb clients'
  - fn accept_new_clients :
   - loop on *tcp_listener*
   - create thread *puffin-server-client* when client tried to connect
   - and create **Client** object to allow PuffinSever to interract with client.
+
+- struct PuffinServerSend
+ - clients: shared list of **Client** object
+ - num_clients: shared 'nb clients'
  - fn send :
   - send frame data by channel to clients thread
   
