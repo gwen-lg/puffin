@@ -3,11 +3,12 @@ use async_executor::{LocalExecutor, Task};
 use async_std::{
     io::WriteExt,
     net::{SocketAddr, TcpListener, TcpStream},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 use futures_lite::future;
 use puffin::GlobalProfiler;
 use std::{
+    cell::RefCell,
     rc::Rc,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -63,7 +64,7 @@ impl Server {
     ) -> anyhow::Result<()> {
         let executor = Arc::new(LocalExecutor::new());
 
-        let clients = Arc::new(RwLock::new(Vec::new()));
+        let clients = Rc::new(RefCell::new(Vec::new()));
         let clients_cloned = clients.clone();
         let num_clients_cloned = num_clients.clone();
 
@@ -151,7 +152,7 @@ impl Drop for Client {
 struct PuffinServerConnection<'a> {
     executor: Arc<LocalExecutor<'a>>,
     tcp_listener: TcpListener,
-    clients: Arc<RwLock<Vec<Client>>>,
+    clients: Rc<RefCell<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
 }
 
@@ -172,13 +173,13 @@ impl<'a> PuffinServerConnection<'a> {
                         });
                     //.context("Couldn't spawn ps-client task")?;
 
-                    self.clients.write().await.push(Client {
+                    self.clients.borrow_mut().push(Client {
                         client_addr,
                         packet_tx: Some(packet_tx),
                         join_handle: Some(join_handle),
                     });
                     self.num_clients
-                        .store(self.clients.read().await.len(), Ordering::SeqCst);
+                        .store(self.clients.borrow().len(), Ordering::SeqCst);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     break; // Nothing to do for now.
@@ -194,13 +195,13 @@ impl<'a> PuffinServerConnection<'a> {
 
 /// streams to client puffin profiler data.
 struct PuffinServerSend {
-    clients: Arc<RwLock<Vec<Client>>>,
+    clients: Rc<RefCell<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
 }
 
 impl PuffinServerSend {
     pub async fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
-        if self.clients.read().await.is_empty() {
+        if self.clients.borrow().is_empty() {
             return Ok(());
         }
         puffin::profile_function!();
@@ -217,7 +218,7 @@ impl PuffinServerSend {
         let packet: Packet = packet.into();
 
         // Send frame to clients, remove disconnected clients and update num_clients var
-        let mut clients = self.clients.write().await;
+        let mut clients = self.clients.borrow_mut();
         let mut idx_to_remove = Vec::new();
         for (idx, client) in clients.iter().enumerate() {
             if !Self::send_to_client(client, packet.clone()).await {
