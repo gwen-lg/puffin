@@ -7,7 +7,10 @@ use async_std::{
 };
 use futures_lite::future;
 use puffin::GlobalProfiler;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    rc::Rc,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 /// Maximum size of the backlog of packets to send to a client if they aren't reading fast enough.
 const MAX_FRAMES_IN_QUEUE: usize = 30;
@@ -122,7 +125,7 @@ impl Drop for Server {
     }
 }
 
-type Packet = Arc<[u8]>;
+type Packet = Rc<[u8]>;
 
 struct Client {
     client_addr: SocketAddr,
