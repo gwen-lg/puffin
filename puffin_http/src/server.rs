@@ -329,7 +329,7 @@ impl Drop for Server {
     }
 }
 
-type Packet = Arc<[u8]>;
+type Packet = Rc<[u8]>;
 
 struct Client {
     client_addr: SocketAddr,
