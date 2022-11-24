@@ -62,7 +62,7 @@ impl Server {
         rx: flume::Receiver<Arc<puffin::FrameData>>,
         num_clients: Arc<AtomicUsize>,
     ) -> anyhow::Result<()> {
-        let executor = Arc::new(LocalExecutor::new());
+        let executor = Rc::new(LocalExecutor::new());
 
         let clients = Rc::new(RefCell::new(Vec::new()));
         let clients_cloned = clients.clone();
@@ -150,7 +150,7 @@ impl Drop for Client {
 
 /// Listens for incoming connections
 struct PuffinServerConnection<'a> {
-    executor: Arc<LocalExecutor<'a>>,
+    executor: Rc<LocalExecutor<'a>>,
     tcp_listener: TcpListener,
     clients: Rc<RefCell<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
