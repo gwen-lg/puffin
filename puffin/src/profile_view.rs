@@ -26,6 +26,7 @@ pub struct FrameView {
     /// Maintain stats as we add/remove frames
     stats: FrameStats,
 
+    /// TODO: indicate the purpose
     scope_collection: ScopeCollection,
 }
 
