@@ -2,7 +2,7 @@ use anyhow::Context as _;
 use async_executor::{LocalExecutor, Task};
 use async_net::{SocketAddr, TcpListener, TcpStream};
 use futures_lite::{future, AsyncWriteExt};
-use puffin::{FrameSinkId, FrameView, GlobalProfiler};
+use puffin::{FrameSinkId, GlobalProfiler, ScopeCollection};
 use std::{
     cell::RefCell,
     rc::Rc,
@@ -294,12 +294,11 @@ impl Server {
                 let mut ps_send = PuffinServerSend {
                     clients,
                     num_clients,
-                    //TODO: send_all_scopes: false,
-                    frame_view: Default::default(),
+                    send_all_scopes: false,
+                    scope_collection: Default::default(),
                 };
 
                 while let Ok(frame) = rx.recv_async().await {
-                    ps_send.frame_view.add_frame(frame.clone());
                     if let Err(err) = ps_send.send(&frame).await {
                         log::warn!("puffin server failure: {}", err);
                     }
@@ -403,7 +402,8 @@ impl<'a> PuffinServerConnection<'a> {
 struct PuffinServerSend {
     clients: Rc<RefCell<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,
-    frame_view: FrameView,
+    send_all_scopes: bool,
+    scope_collection: ScopeCollection,
 }
 
 impl PuffinServerSend {
@@ -413,14 +413,19 @@ impl PuffinServerSend {
         }
         puffin::profile_function!();
 
+        // Keep scope_collection up-to-date
+        frame.scope_delta.iter().for_each(|new_scope| {
+            self.scope_collection.insert(new_scope.clone());
+        });
+
         let mut packet = vec![];
 
         std::io::Write::write_all(&mut packet, &crate::PROTOCOL_VERSION.to_le_bytes()).unwrap();
 
         frame
-            .write_into(self.frame_view.scope_collection(), false, &mut packet)
+            .write_into(&self.scope_collection, self.send_all_scopes, &mut packet)
             .context("Encode puffin frame")?;
-        //TODO self.send_all_scopes = false;
+        self.send_all_scopes = false;
 
         let packet: Packet = packet.into();
 
