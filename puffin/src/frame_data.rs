@@ -584,12 +584,11 @@ impl FrameData {
         write.write_all(&packed_streams.bytes)?;
 
         let _bytes_written = if let Some(scope_collection) = scope_collection {
-            let to_serialize_scopes = scope_collection
-                .scopes_by_id()
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
-            bincode::serde::encode_into_std_write(&to_serialize_scopes, write, standard())
+            bincode::serde::encode_into_std_write(
+                scope_collection.serializable(),
+                write,
+                standard(),
+            )
         } else {
             bincode::serde::encode_into_std_write(&self.scope_delta, write, standard())
         }?;
@@ -784,7 +783,7 @@ impl FrameData {
                     full_delta: false,
                 }))
             } else if &header == b"PFD5" {
-                // Added 2024-12-22: remove useless manual sequence size serialization.
+                // Added 2025-08-17: remove useless manual sequence size serialization and temporary vector.
                 let meta = bincode::serde::decode_from_std_read(read, standard())
                     .context("bincode deserialize")?;
 
@@ -796,19 +795,14 @@ impl FrameData {
                     PackedStreams::new(compression_kind, streams_compressed)
                 };
 
-                let deserialized_scopes: Vec<crate::ScopeDetails> =
+                let deserialized_scopes: Vec<_> =
                     bincode::serde::decode_from_std_read(read, standard())
                         .context("Can not deserialize scope details")?;
-
-                let new_scopes: Vec<_> = deserialized_scopes
-                    .into_iter()
-                    .map(|x| Arc::new(x.clone()))
-                    .collect();
 
                 Ok(Some(Self {
                     meta,
                     data: RwLock::new(FrameDataState::Packed(streams_compressed)),
-                    scope_delta: new_scopes,
+                    scope_delta: deserialized_scopes,
                     full_delta: false,
                 }))
             } else {
