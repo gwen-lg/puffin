@@ -1,7 +1,7 @@
 use anyhow::Context as _;
-use async_executor::{LocalExecutor, Task};
 use async_net::{SocketAddr, TcpListener, TcpStream};
 
+use async_task::Task;
 use futures_lite::{future, AsyncWriteExt};
 use puffin::{FrameSinkId, GlobalProfiler, ScopeCollection};
 use std::{
@@ -11,7 +11,7 @@ use std::{
         Arc,
     },
 };
-use unsend::lock::RwLock;
+use unsend::{executor::Executor, lock::RwLock};
 
 /// Maximum size of the backlog of packets to send to a client if they aren't reading fast enough.
 const MAX_FRAMES_IN_QUEUE: usize = 30;
@@ -266,7 +266,7 @@ impl Server {
         rx: flume::Receiver<Arc<puffin::FrameData>>,
         num_clients: Arc<AtomicUsize>,
     ) -> anyhow::Result<()> {
-        let executor = Rc::new(LocalExecutor::new());
+        let executor = Rc::new(Executor::new());
 
         let clients = Rc::new(RwLock::new(Vec::new()));
         let clients_cloned = clients.clone();
@@ -358,7 +358,7 @@ impl Drop for Client {
 
 /// Listens for incoming connections
 struct PuffinServerConnection<'a> {
-    executor: Rc<LocalExecutor<'a>>,
+    executor: Rc<Executor<'a>>,
     tcp_listener: TcpListener,
     clients: Rc<RwLock<Vec<Client>>>,
     num_clients: Arc<AtomicUsize>,

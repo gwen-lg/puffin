@@ -169,19 +169,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-executor"
-version = "1.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30ca9a001c1e8ba5149f91a74362376cc6bc5b919d92d988668657bd570bdcec"
-dependencies = [
- "async-task",
- "concurrent-queue",
- "fastrand",
- "futures-lite",
- "slab",
-]
-
-[[package]]
 name = "async-io"
 version = "2.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -191,7 +178,7 @@ dependencies = [
  "cfg-if",
  "concurrent-queue",
  "futures-io",
- "futures-lite",
+ "futures-lite 2.6.0",
  "parking",
  "polling",
  "rustix",
@@ -219,7 +206,7 @@ checksum = "b948000fad4873c1c9339d60f2623323a0cfd3816e5181033c6a5cb68b2accf7"
 dependencies = [
  "async-io",
  "blocking",
- "futures-lite",
+ "futures-lite 2.6.0",
 ]
 
 [[package]]
@@ -325,7 +312,7 @@ dependencies = [
  "async-channel",
  "async-task",
  "futures-io",
- "futures-lite",
+ "futures-lite 2.6.0",
  "piper",
 ]
 
@@ -1035,6 +1022,16 @@ name = "futures-io"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
+
+[[package]]
+name = "futures-lite"
+version = "1.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49a9d51ce47660b1e808d3c990b4709f2f415d928835a17dfd16991515c46bce"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "futures-lite"
@@ -2026,10 +2023,10 @@ name = "puffin_http"
 version = "0.16.1"
 dependencies = [
  "anyhow",
- "async-executor",
  "async-net",
+ "async-task",
  "flume",
- "futures-lite",
+ "futures-lite 2.6.0",
  "log",
  "once_cell",
  "parking_lot",
@@ -2618,7 +2615,12 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a53ed0f41cab22aa8d4aee9d2357a1b21cb365537d7349066c76fcd67bc3121d"
 dependencies = [
+ "async-task",
+ "atomic-waker",
+ "concurrent-queue",
+ "futures-lite 1.13.0",
  "pin-project-lite",
+ "slab",
 ]
 
 [[package]]
