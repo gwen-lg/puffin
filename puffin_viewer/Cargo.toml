@@ -40,7 +40,7 @@ eframe = { version = "0.32.0", default-features = false, features = [
     "persistence",
     "wayland",
 ] }
-env_logger = "0.10"
+env_logger = "0.11"
 log = "0.4"
 rfd = "0.10.0"
 
@@ -49,4 +49,4 @@ rfd = "0.10.0"
 mimalloc = "0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures = "0.4.33"
+wasm-bindgen-futures = "0.4"
