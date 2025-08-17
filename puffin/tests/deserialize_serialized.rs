@@ -1,6 +1,11 @@
 mod common;
 
-use std::{io::Seek, thread, time::Duration};
+use std::{
+    env,
+    io::{Read, Seek},
+    thread,
+    time::Duration,
+};
 
 use memfile::MemFile;
 
@@ -23,7 +28,17 @@ fn run_write(file: MemFile) {
 fn run_read(mut file: MemFile) {
     //    let mut frame_reader = BufReader::new(File::open(FILE_NAME).unwrap());
     file.rewind().unwrap();
-    let _ = puffin::FrameView::read(&mut file).expect("read :");
+
+    let output_content = env::var("RUST_BACKTRACE")
+        .map(|value| value == "full" || value == "1" || value == "debug")
+        .unwrap_or(false);
+
+    if output_content {
+        let contents = file.bytes().collect::<Result<Vec<_>, _>>().unwrap();
+        std::fs::write("tests/deserialize_serialized.puffin", contents).unwrap();
+    } else {
+        let _ = puffin::FrameView::read(&mut file).expect("read :");
+    }
 }
 
 #[test]
