@@ -59,6 +59,7 @@ web-time = { version = "0.2", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
+memfile = "0.3"
 
 [[bench]]
 name = "benchmark"
