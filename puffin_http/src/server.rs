@@ -338,9 +338,11 @@ struct PuffinServerImpl {
 
 impl PuffinServerImpl {
     fn accept_new_clients(&mut self) -> anyhow::Result<()> {
+        log::trace!("accept_new_clients enter");
         loop {
             match self.tcp_listener.accept() {
                 Ok((tcp_stream, client_addr)) => {
+                    log::trace!("accept_new_clients for {client_addr:#?}");
                     tcp_stream
                         .set_nonblocking(false)
                         .context("stream.set_nonblocking")?;
@@ -364,6 +366,7 @@ impl PuffinServerImpl {
                     self.num_clients.store(self.clients.len(), Ordering::SeqCst);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    log::trace!("accept_new_clients error {e:#?}");
                     break; // Nothing to do for now.
                 }
                 Err(e) => {
@@ -371,17 +374,21 @@ impl PuffinServerImpl {
                 }
             }
         }
+        log::trace!("accept_new_clients exit");
         Ok(())
     }
 
     pub fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
         if self.clients.is_empty() {
+            log::trace!("frame '{}' dropped as client is empty", frame.frame_index());
             return Ok(());
         }
         puffin::profile_function!();
+        log::trace!("send frame '{}'", frame.frame_index());
 
         // Keep scope_collection up-to-date
         for new_scope in &frame.scope_delta {
+            log::trace!("Server add new scope in collection : {new_scope:#?}");
             self.scope_collection.insert(new_scope.clone());
         }
 
