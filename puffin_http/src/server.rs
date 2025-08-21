@@ -379,18 +379,19 @@ impl PuffinServerImpl {
     }
 
     pub fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
-        if self.clients.is_empty() {
-            log::trace!("frame '{}' dropped as client is empty", frame.frame_index());
-            return Ok(());
-        }
         puffin::profile_function!();
-        log::trace!("send frame '{}'", frame.frame_index());
 
         // Keep scope_collection up-to-date
         for new_scope in &frame.scope_delta {
             log::trace!("Server add new scope in collection : {new_scope:#?}");
             self.scope_collection.insert(new_scope.clone());
         }
+
+        if self.clients.is_empty() {
+            log::trace!("frame '{}' dropped as client is empty", frame.frame_index());
+            return Ok(());
+        }
+        log::trace!("send frame '{}'", frame.frame_index());
 
         let mut packet = vec![];
 
