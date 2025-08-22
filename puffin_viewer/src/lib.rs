@@ -24,15 +24,6 @@ impl Source {
         }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn frame_view(&self) -> FrameView {
-        match self {
-            Self::None => Default::default(),
-            Self::Http(http_client) => http_client.frame_view().clone(),
-            Self::FilePath(_, frame_view) | Self::FileName(_, frame_view) => frame_view.clone(),
-        }
-    }
-
     fn ui(&self, ui: &mut egui::Ui) {
         match self {
             Self::None => {
@@ -94,7 +85,14 @@ impl PuffinViewer {
                 }
             };
 
-            if let Err(error) = self.source.frame_view().write(&mut file) {
+            let res = match &self.source {
+                Source::None => Err(std::io::Error::other("No data to write").into()),
+                Source::Http(http_client) => http_client.frame_view().write(&mut file),
+                Source::FilePath(_, frame_view) | Source::FileName(_, frame_view) => {
+                    frame_view.write(&mut file)
+                }
+            };
+            if let Err(error) = res {
                 self.error = Some(format!("Failed to export: {error:#}"));
             } else {
                 self.error = None;
