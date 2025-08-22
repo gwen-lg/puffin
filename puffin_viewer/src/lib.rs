@@ -74,10 +74,11 @@ impl PuffinViewer {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn save_dialog(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
+        if let Some(mut path) = rfd::FileDialog::new()
             .add_filter("puffin", &["puffin"])
             .save_file()
         {
+            path.set_extension("puffin");
             let mut file = match std::fs::File::create(path) {
                 Ok(file) => file,
                 Err(error) => {
