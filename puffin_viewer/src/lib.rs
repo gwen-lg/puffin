@@ -17,6 +17,13 @@ pub enum Source {
 }
 
 impl Source {
+    fn has_frame_view(&self) -> bool {
+        match self {
+            Self::Http(_) | Self::FilePath(_, _) | Self::FileName(_, _) => true,
+            Self::None => false,
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn frame_view(&self) -> FrameView {
         match self {
@@ -145,11 +152,12 @@ impl PuffinViewer {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn ui_menu_bar(&mut self, ctx: &egui::Context) {
+        let can_save = self.source.has_frame_view();
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
             self.open_dialog();
         }
 
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
+        if ctx.input(|i| can_save && i.modifiers.command && i.key_pressed(egui::Key::S)) {
             self.save_dialog();
         }
 
@@ -162,7 +170,10 @@ impl PuffinViewer {
                         self.open_dialog();
                     }
 
-                    if ui.button("Save as…").clicked() {
+                    if ui
+                        .add_enabled(can_save, egui::Button::new("Save as…"))
+                        .clicked()
+                    {
                         self.save_dialog();
                     }
 
