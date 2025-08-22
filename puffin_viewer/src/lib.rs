@@ -8,6 +8,32 @@
 use eframe::egui;
 use puffin::FrameView;
 use puffin_egui::MaybeMutRef;
+use std::path::PathBuf;
+
+/// puffin profile viewer.
+///
+/// Can either connect remotely to a puffin server
+/// or open a .puffin recording file.
+#[derive(argh::FromArgs)]
+pub struct Arguments {
+    /// which server to connect to, e.g. `127.0.0.1:8585`.
+    #[argh(option, default = "default_url()")]
+    url: String,
+
+    /// what .puffin file to open, e.g. `my/recording.puffin`.
+    #[argh(positional)]
+    file: Option<PathBuf>,
+}
+
+impl Arguments {
+    pub fn get(self) -> (String, Option<PathBuf>) {
+        (self.url, self.file)
+    }
+}
+
+fn default_url() -> String {
+    format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT)
+}
 
 pub enum Source {
     None,
@@ -133,6 +159,12 @@ impl PuffinViewer {
         }
     }
 
+    fn ask_connect(&mut self, url: &str) {
+        self.profiler_ui.reset();
+        self.source = Source::Http(puffin_http::Client::new(url.into()));
+        self.error = None;
+    }
+
     fn open_puffin_bytes(&mut self, name: String, bytes: &[u8]) {
         puffin::profile_function!();
         let mut reader = std::io::Cursor::new(bytes);
@@ -151,12 +183,17 @@ impl PuffinViewer {
     #[cfg(not(target_arch = "wasm32"))]
     fn ui_menu_bar(&mut self, ctx: &egui::Context) {
         let can_save = self.source.has_frame_view();
+        let opt: Arguments = argh::from_env();
         if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::O)) {
             self.open_dialog();
         }
 
         if ctx.input(|i| can_save && i.modifiers.command && i.key_pressed(egui::Key::S)) {
             self.save_dialog();
+        }
+
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::T)) {
+            self.ask_connect(opt.url.as_str());
         }
 
         egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
@@ -173,6 +210,17 @@ impl PuffinViewer {
                         .clicked()
                     {
                         self.save_dialog();
+                    }
+
+                    let enable = !matches!(self.source, Source::Http(_));
+                    if ui
+                        .add_enabled(
+                            enable,
+                            egui::Button::new(format!("Wait Connect to {}", opt.url)),
+                        )
+                        .clicked()
+                    {
+                        self.ask_connect(opt.url.as_str());
                     }
 
                     if ui.button("Quit").clicked() {
