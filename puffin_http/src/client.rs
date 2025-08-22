@@ -57,9 +57,32 @@ impl Client {
                             while alive.load(SeqCst) {
                                 match consume_message(&mut stream) {
                                     Ok(frame_data) => {
-                                        frame_view
-                                            .lock()
-                                            .add_frame(std::sync::Arc::new(frame_data));
+                                        //let new_scopes = !frame_data.scope_delta.is_empty();
+                                        // if new_scopes {
+                                        //     frame_data.scope_delta.iter().for_each(|new_scope| {
+                                        //         log::warn!(
+                                        //             "Frame Data : {} - {}",
+                                        //             new_scope.id(),
+                                        //             new_scope.name()
+                                        //         );
+                                        //     });
+                                        // }
+                                        let mut frame_view = frame_view.lock();
+                                        frame_view.add_frame(std::sync::Arc::new(frame_data));
+
+                                        // if new_scopes {
+                                        //     frame_view
+                                        //         .scope_collection()
+                                        //         .scopes_by_id()
+                                        //         .iter()
+                                        //         .for_each(|(_id, scope_details)| {
+                                        //             log::warn!(
+                                        //                 "Frame View scope : {} - {}",
+                                        //                 scope_details.id(),
+                                        //                 scope_details.name()
+                                        //             );
+                                        //         });
+                                        // }
                                     }
                                     Err(err) => {
                                         log::warn!(

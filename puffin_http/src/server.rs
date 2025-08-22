@@ -366,7 +366,7 @@ impl PuffinServerImpl {
                     self.num_clients.store(self.clients.len(), Ordering::SeqCst);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    log::trace!("accept_new_clients error {e:#?}");
+                    //log::trace!("accept_new_clients error {e:#?}");
                     break; // Nothing to do for now.
                 }
                 Err(e) => {
@@ -380,10 +380,22 @@ impl PuffinServerImpl {
 
     pub fn send(&mut self, frame: &puffin::FrameData) -> anyhow::Result<()> {
         puffin::profile_function!();
+        // if self.send_all_scopes {
+        //     self.scope_collection
+        //         .scopes_by_name()
+        //         .iter()
+        //         .for_each(|(name, id)| {
+        //             log::error!("scope collection : {} - {name}", id.id());
+        //         });
+        // }
 
         // Keep scope_collection up-to-date
         for new_scope in &frame.scope_delta {
-            log::trace!("Server add new scope in collection : {new_scope:#?}");
+            // log::warn!(
+            //     "Server add new scope in collection : {} - {}",
+            //     new_scope.id(),
+            //     new_scope.name()
+            // );
             self.scope_collection.insert(new_scope.clone());
         }
 
